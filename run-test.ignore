@@ -1,0 +1,8 @@
+# Files to ignore for testing
+*.md
+*.txt
+docs/
+README*
+LICENSE
+.gitignore
+.github/workflows/

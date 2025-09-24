@@ -1,0 +1,121 @@
+name: My Special PR Check
+
+on:
+  issue_comment:
+    types: [ created ]
+
+jobs:
+  conditional-test-check:
+    if: github.event.issue.pull_request && contains(github.event.comment.body, 'run test')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+
+      - name: Get branch of PR
+        uses: xt0rted/pull-request-comment-branch@v1
+        id: comment-branch
+
+      - name: Set latest commit status as pending
+        uses: myrotvorets/set-commit-status-action@v2.0.1
+        with:
+          sha: ${{ steps.comment-branch.outputs.head_sha }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          status: pending
+          context: "Special Test Check"
+          description: "Running conditional test check..."
+
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.comment-branch.outputs.head_ref }}
+          fetch-depth: 0
+
+      - name: Get changed files
+        id: changed-files
+        run: |
+          # Get list of changed files in this PR
+          git diff --name-only origin/${{ github.event.pull_request.base.ref }}..HEAD > changed_files.txt
+          echo "Changed files:"
+          cat changed_files.txt
+
+      - name: Check if files should be ignored
+        id: check-ignore
+        run: |
+          # Check if run-test.ignore file exists
+          if [ ! -f "run-test.ignore" ]; then
+            echo "should_skip=false" >> $GITHUB_OUTPUT
+            echo "reason=No run-test.ignore file found" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          # Check each changed file against ignore patterns
+          should_skip=true
+          while IFS= read -r file; do
+            if [ -n "$file" ]; then
+              # Use git check-ignore to see if file matches patterns in run-test.ignore
+              if ! git check-ignore -q --stdin < run-test.ignore <<< "$file"; then
+                should_skip=false
+                break
+              fi
+            fi
+          done < changed_files.txt
+          
+          echo "should_skip=$should_skip" >> $GITHUB_OUTPUT
+          if [ "$should_skip" = "true" ]; then
+            echo "reason=All changed files are in ignore list" >> $GITHUB_OUTPUT
+          else
+            echo "reason=Some changed files require testing" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Count lines in src/Main.kt
+        id: count-lines
+        if: steps.check-ignore.outputs.should_skip == 'false'
+        run: |
+          if [ -f "src/Main.kt" ]; then
+            line_count=$(wc -l < src/Main.kt)
+            echo "line_count=$line_count" >> $GITHUB_OUTPUT
+            echo "src/Main.kt has $line_count lines"
+          else
+            echo "line_count=0" >> $GITHUB_OUTPUT
+            echo "src/Main.kt not found"
+          fi
+
+      - name: Determine test result
+        id: test-result
+        run: |
+          if [ "${{ steps.check-ignore.outputs.should_skip }}" = "true" ]; then
+            echo "status=success" >> $GITHUB_OUTPUT
+            echo "description=All changed files are ignored - auto pass" >> $GITHUB_OUTPUT
+          elif [ "${{ steps.count-lines.outputs.line_count }}" -gt 100 ]; then
+            echo "status=failure" >> $GITHUB_OUTPUT
+            echo "description=src/Main.kt has ${{ steps.count-lines.outputs.line_count }} lines (>100) - test failed" >> $GITHUB_OUTPUT
+          else
+            echo "status=success" >> $GITHUB_OUTPUT
+            echo "description=src/Main.kt has ${{ steps.count-lines.outputs.line_count }} lines (≤100) - test passed" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Send comment in pull request
+        if: always()
+        uses: mshick/add-pr-comment@v2
+        with:
+          refresh-message-position: true
+          message: |
+            ## Special Test Check Results :dart:
+            
+            **Commit**: [${{ steps.comment-branch.outputs.head_sha }}](https://github.com/${{ github.repository }}/commit/${{ steps.comment-branch.outputs.head_sha }})
+            
+            **Result**: ${{ steps.test-result.outputs.status == 'success' && '✅ PASSED' || '❌ FAILED' }}
+            
+            **Details**: ${{ steps.test-result.outputs.description }}
+            
+            **Reason**: ${{ steps.check-ignore.outputs.reason }}
+
+      - name: Set final commit status
+        if: always()
+        uses: myrotvorets/set-commit-status-action@v2.0.1
+        with:
+          sha: ${{ steps.comment-branch.outputs.head_sha }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          status: ${{ steps.test-result.outputs.status || 'error' }}
+          context: "Special Test Check"
+          description: ${{ steps.test-result.outputs.description || 'Check completed with errors' }}
