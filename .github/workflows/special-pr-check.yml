@@ -1,28 +1,111 @@
-name: My Special PR Check
+name: Smart PR Check
 
 on:
+  pull_request:
+    types: [opened, synchronize, reopened]
   issue_comment:
-    types: [ created ]
+    types: [created]
 
 jobs:
-  conditional-test-check:
-    if: github.event.issue.pull_request && contains(github.event.comment.body, 'run test')
+  # Job 1: Check if test is required based on file changes
+  check-if-test-required:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    outputs:
+      test-required: ${{ steps.check-files.outputs.test-required }}
+      pr-number: ${{ github.event.pull_request.number }}
+      head-sha: ${{ github.event.pull_request.head.sha }}
     steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
+      - name: Check if test is required
+        id: check-files
+        run: |
+          # Get changed files in this PR
+          git fetch origin ${{ github.event.pull_request.base.ref }}
+          CHANGED_FILES=$(git diff --name-only origin/${{ github.event.pull_request.base.ref }}...HEAD)
+          
+          echo "Changed files:"
+          echo "$CHANGED_FILES"
+          
+          # Check if run-test.ignore file exists
+          if [ ! -f "run-test.ignore" ]; then
+            echo "run-test.ignore file not found, assuming test is required"
+            echo "test-required=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          # Check if any changed file is NOT in the ignore list
+          TEST_REQUIRED=false
+          
+          while IFS= read -r file; do
+            if [ -n "$file" ]; then
+              # Use git check-ignore to see if file matches ignore patterns
+              if ! git check-ignore -q "$file" --stdin <<< "$file" 2>/dev/null; then
+                # Check manually against run-test.ignore patterns
+                if ! grep -Fx "$file" run-test.ignore >/dev/null 2>&1; then
+                  # Simple pattern matching for gitignore-style patterns
+                  MATCHED=false
+                  while IFS= read -r pattern; do
+                    if [ -n "$pattern" ] && [[ ! "$pattern" =~ ^#.* ]]; then
+                      # Remove leading/trailing whitespace
+                      pattern=$(echo "$pattern" | xargs)
+                      # Simple glob matching
+                      if [[ "$file" == $pattern ]] || [[ "$file" == *"$pattern"* ]] || [[ "$pattern" == *"*"* && "$file" == ${pattern//\*/} ]]; then
+                        MATCHED=true
+                        break
+                      fi
+                    fi
+                  done < run-test.ignore
+                  
+                  if [ "$MATCHED" = false ]; then
+                    echo "File $file is not ignored, test is required"
+                    TEST_REQUIRED=true
+                    break
+                  fi
+                fi
+              fi
+            fi
+          done <<< "$CHANGED_FILES"
+          
+          echo "test-required=$TEST_REQUIRED" >> $GITHUB_OUTPUT
+          
+          if [ "$TEST_REQUIRED" = true ]; then
+            echo "✅ Test is REQUIRED - relevant files were changed"
+          else
+            echo "⏭️ Test is NOT REQUIRED - only ignored files were changed"
+          fi
+
+      - name: Set commit status based on requirement
+        uses: myrotvorets/set-commit-status-action@v2
+        with:
+          sha: ${{ github.event.pull_request.head.sha }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          status: ${{ steps.check-files.outputs.test-required == 'true' && 'pending' || 'success' }}
+          context: 'Smart PR Check'
+          description: ${{ steps.check-files.outputs.test-required == 'true' && 'Test required - comment "run test" to execute' || 'Test not required - no relevant files changed' }}
+
+  # Job 2: Run actual test when comment is made
+  run-test-on-comment:
+    if: github.event_name == 'issue_comment' && github.event.issue.pull_request && contains(github.event.comment.body, 'run test')
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
       - name: Get branch of PR
-        uses: xt0rted/pull-request-comment-branch@v1
+        uses: xt0rted/pull-request-comment-branch@v2
         id: comment-branch
 
       - name: Set latest commit status as pending
-        uses: myrotvorets/set-commit-status-action@v2.0.1
+        uses: myrotvorets/set-commit-status-action@v2
         with:
           sha: ${{ steps.comment-branch.outputs.head_sha }}
           token: ${{ secrets.GITHUB_TOKEN }}
           status: pending
-          context: "Special Test Check"
-          description: "Running conditional test check..."
+          context: 'Smart PR Check'
+          description: 'Running tests...'
 
       - name: Checkout PR branch
         uses: actions/checkout@v4
@@ -30,92 +113,108 @@ jobs:
           ref: ${{ steps.comment-branch.outputs.head_ref }}
           fetch-depth: 0
 
-      - name: Get changed files
-        id: changed-files
+      - name: Check if test is actually required
+        id: verify-requirement
         run: |
-          # Get list of changed files in this PR
-          git diff --name-only origin/${{ github.event.pull_request.base.ref }}..HEAD > changed_files.txt
+          # Re-verify that test is still required (in case files changed)
+          git fetch origin main  # or your default branch
+          CHANGED_FILES=$(git diff --name-only origin/main...HEAD)
+          
           echo "Changed files:"
-          cat changed_files.txt
-
-      - name: Check if files should be ignored
-        id: check-ignore
-        run: |
-          # Check if run-test.ignore file exists
+          echo "$CHANGED_FILES"
+          
           if [ ! -f "run-test.ignore" ]; then
-            echo "should_skip=false" >> $GITHUB_OUTPUT
-            echo "reason=No run-test.ignore file found" >> $GITHUB_OUTPUT
+            echo "run-test.ignore not found, proceeding with test"
+            echo "should-run-test=true" >> $GITHUB_OUTPUT
             exit 0
           fi
           
-          # Check each changed file against ignore patterns
-          should_skip=true
+          TEST_REQUIRED=false
           while IFS= read -r file; do
             if [ -n "$file" ]; then
-              # Use git check-ignore to see if file matches patterns in run-test.ignore
-              if ! git check-ignore -q --stdin < run-test.ignore <<< "$file"; then
-                should_skip=false
+              MATCHED=false
+              while IFS= read -r pattern; do
+                if [ -n "$pattern" ] && [[ ! "$pattern" =~ ^#.* ]]; then
+                  pattern=$(echo "$pattern" | xargs)
+                  if [[ "$file" == $pattern ]] || [[ "$file" == *"$pattern"* ]] || [[ "$pattern" == *"*"* && "$file" == ${pattern//\*/} ]]; then
+                    MATCHED=true
+                    break
+                  fi
+                fi
+              done < run-test.ignore
+              
+              if [ "$MATCHED" = false ]; then
+                TEST_REQUIRED=true
                 break
               fi
             fi
-          done < changed_files.txt
+          done <<< "$CHANGED_FILES"
           
-          echo "should_skip=$should_skip" >> $GITHUB_OUTPUT
-          if [ "$should_skip" = "true" ]; then
-            echo "reason=All changed files are in ignore list" >> $GITHUB_OUTPUT
-          else
-            echo "reason=Some changed files require testing" >> $GITHUB_OUTPUT
-          fi
+          echo "should-run-test=$TEST_REQUIRED" >> $GITHUB_OUTPUT
 
       - name: Count lines in src/Main.kt
         id: count-lines
-        if: steps.check-ignore.outputs.should_skip == 'false'
+        if: steps.verify-requirement.outputs.should-run-test == 'true'
         run: |
           if [ -f "src/Main.kt" ]; then
-            line_count=$(wc -l < src/Main.kt)
-            echo "line_count=$line_count" >> $GITHUB_OUTPUT
-            echo "src/Main.kt has $line_count lines"
+            LINE_COUNT=$(wc -l < src/Main.kt)
+            echo "Line count in src/Main.kt: $LINE_COUNT"
+            echo "line-count=$LINE_COUNT" >> $GITHUB_OUTPUT
+            
+            if [ $LINE_COUNT -gt 100 ]; then
+              echo "❌ Test FAILED: src/Main.kt has $LINE_COUNT lines (exceeds 100 line limit)"
+              echo "test-result=failure" >> $GITHUB_OUTPUT
+              echo "test-message=❌ Test FAILED: src/Main.kt has $LINE_COUNT lines (exceeds 100 line limit)" >> $GITHUB_OUTPUT
+            else
+              echo "✅ Test PASSED: src/Main.kt has $LINE_COUNT lines (within 100 line limit)"
+              echo "test-result=success" >> $GITHUB_OUTPUT
+              echo "test-message=✅ Test PASSED: src/Main.kt has $LINE_COUNT lines (within 100 line limit)" >> $GITHUB_OUTPUT
+            fi
           else
-            echo "line_count=0" >> $GITHUB_OUTPUT
-            echo "src/Main.kt not found"
+            echo "❌ Test FAILED: src/Main.kt not found"
+            echo "test-result=failure" >> $GITHUB_OUTPUT
+            echo "test-message=❌ Test FAILED: src/Main.kt not found" >> $GITHUB_OUTPUT
           fi
 
-      - name: Determine test result
-        id: test-result
-        run: |
-          if [ "${{ steps.check-ignore.outputs.should_skip }}" = "true" ]; then
-            echo "status=success" >> $GITHUB_OUTPUT
-            echo "description=All changed files are ignored - auto pass" >> $GITHUB_OUTPUT
-          elif [ "${{ steps.count-lines.outputs.line_count }}" -gt 100 ]; then
-            echo "status=failure" >> $GITHUB_OUTPUT
-            echo "description=src/Main.kt has ${{ steps.count-lines.outputs.line_count }} lines (>100) - test failed" >> $GITHUB_OUTPUT
-          else
-            echo "status=success" >> $GITHUB_OUTPUT
-            echo "description=src/Main.kt has ${{ steps.count-lines.outputs.line_count }} lines (≤100) - test passed" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Send comment in pull request
-        if: always()
+      - name: Send test result comment
+        if: always() && steps.verify-requirement.outputs.should-run-test == 'true'
         uses: mshick/add-pr-comment@v2
         with:
           refresh-message-position: true
           message: |
-            ## Special Test Check Results :dart:
+            ## Smart PR Check Results 🎯
             
-            **Commit**: [${{ steps.comment-branch.outputs.head_sha }}](https://github.com/${{ github.repository }}/commit/${{ steps.comment-branch.outputs.head_sha }})
+            **Commit:** [${{ steps.comment-branch.outputs.head_sha }}](https://github.com/${{ github.repository }}/commit/${{ steps.comment-branch.outputs.head_sha }})
             
-            **Result**: ${{ steps.test-result.outputs.status == 'success' && '✅ PASSED' || '❌ FAILED' }}
+            **Test Result:** ${{ steps.count-lines.outputs.test-message }}
             
-            **Details**: ${{ steps.test-result.outputs.description }}
+            **Details:**
+            - File checked: `src/Main.kt`
+            - Line count: ${{ steps.count-lines.outputs.line-count || 'N/A' }}
+            - Limit: 100 lines
             
-            **Reason**: ${{ steps.check-ignore.outputs.reason }}
+            [View full workflow run →](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+      - name: Send skip comment if test not required
+        if: always() && steps.verify-requirement.outputs.should-run-test == 'false'
+        uses: mshick/add-pr-comment@v2
+        with:
+          refresh-message-position: true
+          message: |
+            ## Smart PR Check Results 🎯
+            
+            **Commit:** [${{ steps.comment-branch.outputs.head_sha }}](https://github.com/${{ github.repository }}/commit/${{ steps.comment-branch.outputs.head_sha }})
+            
+            **Result:** ⏭️ **Test Skipped** - Only ignored files were changed
+            
+            No relevant files were modified that require testing.
 
       - name: Set final commit status
         if: always()
-        uses: myrotvorets/set-commit-status-action@v2.0.1
+        uses: myrotvorets/set-commit-status-action@v2
         with:
           sha: ${{ steps.comment-branch.outputs.head_sha }}
           token: ${{ secrets.GITHUB_TOKEN }}
-          status: ${{ steps.test-result.outputs.status || 'error' }}
-          context: "Special Test Check"
-          description: ${{ steps.test-result.outputs.description || 'Check completed with errors' }}
+          status: ${{ steps.verify-requirement.outputs.should-run-test == 'false' && 'success' || steps.count-lines.outputs.test-result }}
+          context: 'Smart PR Check'
+          description: ${{ steps.verify-requirement.outputs.should-run-test == 'false' && 'Test skipped - no relevant files changed' || steps.count-lines.outputs.test-message }}
