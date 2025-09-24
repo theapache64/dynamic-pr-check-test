@@ -124,8 +124,8 @@ jobs:
         id: verify-requirement
         run: |
           # Re-verify that test is still required (in case files changed)
-          git fetch origin main  # or your default branch
-          CHANGED_FILES=$(git diff --name-only origin/main...HEAD)
+          git fetch origin master  # or your default branch
+          CHANGED_FILES=$(git diff --name-only origin/master...HEAD)
           
           echo "Changed files:"
           echo "$CHANGED_FILES"
