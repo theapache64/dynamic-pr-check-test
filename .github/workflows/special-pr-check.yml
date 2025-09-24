@@ -19,7 +19,7 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     outputs:
-      test-required: ${{ steps.check-files.outputs.test-required }}
+      test-required: ${{ steps.check-files.outputs.result }}
       pr-number: ${{ github.event.pull_request.number }}
       head-sha: ${{ github.event.pull_request.head.sha }}
     steps:
@@ -29,28 +29,19 @@ jobs:
           fetch-depth: 0
 
       - name: Check for changes in files that require testing  
-        uses: dorny/paths-filter@v2
+        uses: ./.github/actions/check-test-requirement
         id: check-files
         with:
-          filters: |
-            test-required:
-              - '!*.md'
-              - '!*.txt'
-              - '!docs/**'
-              - '!README*'
-              - '!LICENSE'
-              - '!.gitignore'
-              - '!.github/workflows/**'
-              - '**'
+          output-name: 'test-required'
 
       - name: Set commit status based on requirement
         uses: myrotvorets/set-commit-status-action@v1.1.7
         with:
           sha: ${{ github.event.pull_request.head.sha }}
           token: ${{ secrets.GITHUB_TOKEN }}
-          status: ${{ steps.check-files.outputs.test-required == 'true' && 'pending' || 'success' }}
+          status: ${{ steps.check-files.outputs.result == 'true' && 'pending' || 'success' }}
           context: 'Special Test Check'
-          description: ${{ steps.check-files.outputs.test-required == 'true' && 'Test required - comment "run test" to execute' || 'Test not required - no relevant files changed' }}
+          description: ${{ steps.check-files.outputs.result == 'true' && 'Test required - comment "run test" to execute' || 'Test not required - no relevant files changed' }}
 
   # Job 2: Run actual test when comment is made
   run-test-on-comment:
@@ -78,23 +69,14 @@ jobs:
           fetch-depth: 0
 
       - name: Check if test is actually required
-        uses: dorny/paths-filter@v2
+        uses: ./.github/actions/check-test-requirement
         id: verify-requirement  
         with:
-          filters: |
-            should-run-test:
-              - '!*.md'
-              - '!*.txt'
-              - '!docs/**'
-              - '!README*'
-              - '!LICENSE'
-              - '!.gitignore'
-              - '!.github/workflows/**'
-              - '**'
+          output-name: 'should-run-test'
 
       - name: Count lines in src/Main.kt
         id: count-lines
-        if: steps.verify-requirement.outputs.should-run-test == 'true'
+        if: steps.verify-requirement.outputs.result == 'true'
         run: |
           if [ -f "src/Main.kt" ]; then
             LINE_COUNT=$(wc -l < src/Main.kt)
@@ -117,7 +99,7 @@ jobs:
           fi
 
       - name: Send test result comment
-        if: always() && steps.verify-requirement.outputs.should-run-test == 'true'
+        if: always() && steps.verify-requirement.outputs.result == 'true'
         uses: mshick/add-pr-comment@v2
         with:
           refresh-message-position: true
@@ -136,7 +118,7 @@ jobs:
             [View full workflow run →](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
 
       - name: Send skip comment if test not required
-        if: always() && steps.verify-requirement.outputs.should-run-test == 'false'
+        if: always() && steps.verify-requirement.outputs.result == 'false'
         uses: mshick/add-pr-comment@v2
         with:
           refresh-message-position: true
@@ -155,6 +137,6 @@ jobs:
         with:
           sha: ${{ steps.comment-branch.outputs.head_sha }}
           token: ${{ secrets.GITHUB_TOKEN }}
-          status: ${{ steps.verify-requirement.outputs.should-run-test == 'false' && 'success' || steps.count-lines.outputs.test-result }}
+          status: ${{ steps.verify-requirement.outputs.result == 'false' && 'success' || steps.count-lines.outputs.test-result }}
           context: 'Special Test Check'
-          description: ${{ steps.verify-requirement.outputs.should-run-test == 'false' && 'Test skipped - no relevant files changed' || steps.count-lines.outputs.test-message }}
+          description: ${{ steps.verify-requirement.outputs.result == 'false' && 'Test skipped - no relevant files changed' || steps.count-lines.outputs.test-message }}
