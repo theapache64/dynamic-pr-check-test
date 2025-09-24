@@ -80,7 +80,7 @@ jobs:
           fi
 
       - name: Set commit status based on requirement
-        uses: myrotvorets/set-commit-status-action@v2
+        uses: myrotvorets/set-commit-status-action@v1.1.7
         with:
           sha: ${{ github.event.pull_request.head.sha }}
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -99,7 +99,7 @@ jobs:
         id: comment-branch
 
       - name: Set latest commit status as pending
-        uses: myrotvorets/set-commit-status-action@v2
+        uses: myrotvorets/set-commit-status-action@v1.1.7
         with:
           sha: ${{ steps.comment-branch.outputs.head_sha }}
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -200,7 +200,7 @@ jobs:
         uses: mshick/add-pr-comment@v2
         with:
           refresh-message-position: true
-          message: |
+          message: |x
             ## Smart PR Check Results 🎯
             
             **Commit:** [${{ steps.comment-branch.outputs.head_sha }}](https://github.com/${{ github.repository }}/commit/${{ steps.comment-branch.outputs.head_sha }})
@@ -211,7 +211,7 @@ jobs:
 
       - name: Set final commit status
         if: always()
-        uses: myrotvorets/set-commit-status-action@v2
+        uses: myrotvorets/set-commit-status-action@v1.1.7
         with:
           sha: ${{ steps.comment-branch.outputs.head_sha }}
           token: ${{ secrets.GITHUB_TOKEN }}
