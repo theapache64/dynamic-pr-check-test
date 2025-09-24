@@ -67,7 +67,7 @@ jobs:
                       fi
                     fi
                   done < run-test.ignore
-                  
+          
                   if [ "$MATCHED" = false ]; then
                     echo "File $file is not ignored, test is required"
                     TEST_REQUIRED=true
@@ -92,7 +92,7 @@ jobs:
           sha: ${{ github.event.pull_request.head.sha }}
           token: ${{ secrets.GITHUB_TOKEN }}
           status: ${{ steps.check-files.outputs.test-required == 'true' && 'pending' || 'success' }}
-          context: 'Smart PR Check'
+          context: 'Special Test Check'
           description: ${{ steps.check-files.outputs.test-required == 'true' && 'Test required - comment "run test" to execute' || 'Test not required - no relevant files changed' }}
 
   # Job 2: Run actual test when comment is made
@@ -111,7 +111,7 @@ jobs:
           sha: ${{ steps.comment-branch.outputs.head_sha }}
           token: ${{ secrets.GITHUB_TOKEN }}
           status: pending
-          context: 'Smart PR Check'
+          context: 'Special Test Check'
           description: 'Running tests...'
 
       - name: Checkout PR branch
@@ -149,7 +149,7 @@ jobs:
                   fi
                 fi
               done < run-test.ignore
-              
+          
               if [ "$MATCHED" = false ]; then
                 TEST_REQUIRED=true
                 break
@@ -167,7 +167,7 @@ jobs:
             LINE_COUNT=$(wc -l < src/Main.kt)
             echo "Line count in src/Main.kt: $LINE_COUNT"
             echo "line-count=$LINE_COUNT" >> $GITHUB_OUTPUT
-            
+          
             if [ $LINE_COUNT -gt 100 ]; then
               echo "❌ Test FAILED: src/Main.kt has $LINE_COUNT lines (exceeds 100 line limit)"
               echo "test-result=failure" >> $GITHUB_OUTPUT
@@ -223,5 +223,5 @@ jobs:
           sha: ${{ steps.comment-branch.outputs.head_sha }}
           token: ${{ secrets.GITHUB_TOKEN }}
           status: ${{ steps.verify-requirement.outputs.should-run-test == 'false' && 'success' || steps.count-lines.outputs.test-result }}
-          context: 'Smart PR Check'
+          context: 'Special Test Check'
           description: ${{ steps.verify-requirement.outputs.should-run-test == 'false' && 'Test skipped - no relevant files changed' || steps.count-lines.outputs.test-message }}
