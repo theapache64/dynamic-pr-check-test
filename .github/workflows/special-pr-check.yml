@@ -6,6 +6,13 @@ on:
   issue_comment:
     types: [created]
 
+# ADD THIS PERMISSIONS BLOCK HERE
+permissions:
+  statuses: write
+  contents: read
+  pull-requests: write
+  issues: write
+
 jobs:
   # Job 1: Check if test is required based on file changes
   check-if-test-required:
