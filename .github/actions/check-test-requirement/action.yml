@@ -21,6 +21,7 @@ runs:
       with:
         filters: |
           ${{ inputs.output-name }}:
+            - '**'
             - '!*.md'
             - '!*.txt'
             - '!docs/**'
@@ -28,4 +29,3 @@ runs:
             - '!LICENSE'
             - '!.gitignore'
             - '!.github/workflows/**'
-            - '**'
