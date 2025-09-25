@@ -10,7 +10,7 @@ inputs:
 outputs:
   result:
     description: 'Whether test is required (true/false)'
-    value: ${{ steps.check-files.outputs[inputs.output-name] }}
+    value: ${{ steps.check-files.outputs.test-required }}
 
 runs:
   using: "composite"
@@ -20,12 +20,14 @@ runs:
       id: check-files
       with:
         filters: |
-          ${{ inputs.output-name }}:
+          test-required:
             - '**'
+            - '!README*'
             - '!*.md'
             - '!*.txt'
             - '!docs/**'
-            - '!README*'
-            - '!LICENSE'
+            - '!LICENSE*'
             - '!.gitignore'
             - '!.github/workflows/**'
+            - '!*.yml'
+            - '!*.yaml'
