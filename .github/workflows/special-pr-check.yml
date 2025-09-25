@@ -6,12 +6,19 @@ on:
   issue_comment:
     types: [created]
 
-# ADD THIS PERMISSIONS BLOCK HERE
 permissions:
   statuses: write
   contents: read
   pull-requests: write
   issues: write
+
+# Define common configuration as workflow-level environment variables
+env:
+  IGNORED_FILES: |
+    docs/**
+    *.md
+    .gitignore
+    scripts/**
 
 jobs:
   # Job 1: Check if test is required based on file changes
@@ -32,15 +39,7 @@ jobs:
         id: changed-files
         uses: tj-actions/changed-files@v40
         with:
-          files_ignore: |
-            docs/**
-            *.md
-            .gitignore
-            scripts/**
-
-      - name: Skip PR check
-        if: steps.changed-files.outputs.any_changed != 'true'
-        run: echo "Skipping PR check - only ignored files changed"
+          files_ignore: ${{ env.IGNORED_FILES }}
 
       - name: Set commit status based on requirement
         uses: myrotvorets/set-commit-status-action@v1.1.7
@@ -80,11 +79,7 @@ jobs:
         id: changed-files
         uses: tj-actions/changed-files@v40
         with:
-          files_ignore: |
-            docs/**
-            *.md
-            .gitignore
-            scripts/**
+          files_ignore: ${{ env.IGNORED_FILES }}
 
       - name: Count lines in src/Main.kt
         id: count-lines
