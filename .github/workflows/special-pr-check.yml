@@ -28,72 +28,28 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Check if test is required
-        id: check-files
-        run: |
-          # Get changed files in this PR
-          git fetch origin ${{ github.event.pull_request.base.ref }}
-          CHANGED_FILES=$(git diff --name-only origin/${{ github.event.pull_request.base.ref }}...HEAD)
-          
-          echo "Changed files:"
-          echo "$CHANGED_FILES"
-          
-          # Check if run-test.ignore file exists
-          if [ ! -f "run-test.ignore" ]; then
-            echo "run-test.ignore file not found, assuming test is required"
-            echo "test-required=true" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-          
-          # Check if any changed file is NOT in the ignore list
-          TEST_REQUIRED=false
-          
-          while IFS= read -r file; do
-            if [ -n "$file" ]; then
-              # Use git check-ignore to see if file matches ignore patterns
-              if ! git check-ignore -q "$file" --stdin <<< "$file" 2>/dev/null; then
-                # Check manually against run-test.ignore patterns
-                if ! grep -Fx "$file" run-test.ignore >/dev/null 2>&1; then
-                  # Simple pattern matching for gitignore-style patterns
-                  MATCHED=false
-                  while IFS= read -r pattern; do
-                    if [ -n "$pattern" ] && [[ ! "$pattern" =~ ^#.* ]]; then
-                      # Remove leading/trailing whitespace
-                      pattern=$(echo "$pattern" | xargs)
-                      # Simple glob matching
-                      if [[ "$file" == $pattern ]] || [[ "$file" == *"$pattern"* ]] || [[ "$pattern" == *"*"* && "$file" == ${pattern//\*/} ]]; then
-                        MATCHED=true
-                        break
-                      fi
-                    fi
-                  done < run-test.ignore
-          
-                  if [ "$MATCHED" = false ]; then
-                    echo "File $file is not ignored, test is required"
-                    TEST_REQUIRED=true
-                    break
-                  fi
-                fi
-              fi
-            fi
-          done <<< "$CHANGED_FILES"
-          
-          echo "test-required=$TEST_REQUIRED" >> $GITHUB_OUTPUT
-          
-          if [ "$TEST_REQUIRED" = true ]; then
-            echo "✅ Test is REQUIRED - relevant files were changed"
-          else
-            echo "⏭️ Test is NOT REQUIRED - only ignored files were changed"
-          fi
+      - name: Get changed files
+        id: changed-files
+        uses: tj-actions/changed-files@v40
+        with:
+          files_ignore: |
+            docs/**
+            *.md
+            .gitignore
+            scripts/**
+
+      - name: Skip PR check
+        if: steps.changed-files.outputs.any_changed != 'true'
+        run: echo "Skipping PR check - only ignored files changed"
 
       - name: Set commit status based on requirement
         uses: myrotvorets/set-commit-status-action@v1.1.7
         with:
           sha: ${{ github.event.pull_request.head.sha }}
           token: ${{ secrets.GITHUB_TOKEN }}
-          status: ${{ steps.check-files.outputs.test-required == 'true' && 'pending' || 'success' }}
+          status: ${{ steps.changed-files.outputs.any_changed == 'true' && 'pending' || 'success' }}
           context: 'Special Test Check'
-          description: ${{ steps.check-files.outputs.test-required == 'true' && 'Test required - comment "run test" to execute' || 'Test not required - no relevant files changed' }}
+          description: ${{ steps.changed-files.outputs.any_changed == 'true' && 'Test required - comment "run test" to execute' || 'Test not required - no relevant files changed' }}
 
   # Job 2: Run actual test when comment is made
   run-test-on-comment:
@@ -120,48 +76,19 @@ jobs:
           ref: ${{ steps.comment-branch.outputs.head_ref }}
           fetch-depth: 0
 
-      - name: Check if test is actually required
-        id: verify-requirement
-        run: |
-          # Re-verify that test is still required (in case files changed)
-          git fetch origin master  # or your default branch
-          CHANGED_FILES=$(git diff --name-only origin/master...HEAD)
-          
-          echo "Changed files:"
-          echo "$CHANGED_FILES"
-          
-          if [ ! -f "run-test.ignore" ]; then
-            echo "run-test.ignore not found, proceeding with test"
-            echo "should-run-test=true" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-          
-          TEST_REQUIRED=false
-          while IFS= read -r file; do
-            if [ -n "$file" ]; then
-              MATCHED=false
-              while IFS= read -r pattern; do
-                if [ -n "$pattern" ] && [[ ! "$pattern" =~ ^#.* ]]; then
-                  pattern=$(echo "$pattern" | xargs)
-                  if [[ "$file" == $pattern ]] || [[ "$file" == *"$pattern"* ]] || [[ "$pattern" == *"*"* && "$file" == ${pattern//\*/} ]]; then
-                    MATCHED=true
-                    break
-                  fi
-                fi
-              done < run-test.ignore
-          
-              if [ "$MATCHED" = false ]; then
-                TEST_REQUIRED=true
-                break
-              fi
-            fi
-          done <<< "$CHANGED_FILES"
-          
-          echo "should-run-test=$TEST_REQUIRED" >> $GITHUB_OUTPUT
+      - name: Get changed files
+        id: changed-files
+        uses: tj-actions/changed-files@v40
+        with:
+          files_ignore: |
+            docs/**
+            *.md
+            .gitignore
+            scripts/**
 
       - name: Count lines in src/Main.kt
         id: count-lines
-        if: steps.verify-requirement.outputs.should-run-test == 'true'
+        if: steps.changed-files.outputs.any_changed == 'true'
         run: |
           if [ -f "src/Main.kt" ]; then
             LINE_COUNT=$(wc -l < src/Main.kt)
@@ -184,7 +111,7 @@ jobs:
           fi
 
       - name: Send test result comment
-        if: always() && steps.verify-requirement.outputs.should-run-test == 'true'
+        if: always() && steps.changed-files.outputs.any_changed == 'true'
         uses: mshick/add-pr-comment@v2
         with:
           refresh-message-position: true
@@ -203,7 +130,7 @@ jobs:
             [View full workflow run →](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
 
       - name: Send skip comment if test not required
-        if: always() && steps.verify-requirement.outputs.should-run-test == 'false'
+        if: always() && steps.changed-files.outputs.any_changed == 'false'
         uses: mshick/add-pr-comment@v2
         with:
           refresh-message-position: true
@@ -222,6 +149,6 @@ jobs:
         with:
           sha: ${{ steps.comment-branch.outputs.head_sha }}
           token: ${{ secrets.GITHUB_TOKEN }}
-          status: ${{ steps.verify-requirement.outputs.should-run-test == 'false' && 'success' || steps.count-lines.outputs.test-result }}
+          status: ${{ steps.changed-files.outputs.any_changed == 'false' && 'success' || steps.count-lines.outputs.test-result }}
           context: 'Special Test Check'
-          description: ${{ steps.verify-requirement.outputs.should-run-test == 'false' && 'Test skipped - no relevant files changed' || steps.count-lines.outputs.test-message }}
+          description: ${{ steps.changed-files.outputs.any_changed == 'false' && 'Test skipped - no relevant files changed' || steps.count-lines.outputs.test-message }}
