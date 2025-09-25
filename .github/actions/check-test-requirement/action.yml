@@ -1,0 +1,31 @@
+name: 'Check Test Requirement'
+description: 'Check if test is required based on changed files using centralized filter configuration'
+
+inputs:
+  output-name:
+    description: 'Name of the output variable to set'
+    required: true
+    default: 'test-required'
+
+outputs:
+  result:
+    description: 'Whether test is required (true/false)'
+    value: ${{ steps.check-files.outputs[inputs.output-name] }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Check for changes in files that require testing  
+      uses: dorny/paths-filter@v2
+      id: check-files
+      with:
+        filters: |
+          ${{ inputs.output-name }}:
+            - '!*.md'
+            - '!*.txt'
+            - '!docs/**'
+            - '!README*'
+            - '!LICENSE'
+            - '!.gitignore'
+            - '!.github/workflows/**'
+            - '**'
